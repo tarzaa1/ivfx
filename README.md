@@ -62,17 +62,28 @@ and reduced to one sign bit per dimension (`nb_bits=1`), giving `d/8` bytes.
 Two extra float32 values are stored per vector: the squared residual norm
 `||x - c||^2` and a rescaling factor that turns the bitwise popcount against
 the quantized query into an unbiased estimate of the inner product. These are
-the "+8 bytes". The code is data-oblivious (no learned codebook) and its error
+the "+8 bytes".
+
+With `nb_bits > 1` the code is stored in two parts: the 1-bit sign code
+with 3 floats (the two above plus an error-bound factor), followed by the
+remaining `nb_bits - 1` bits per dimension with 2 more floats (an additive
+term and a rescale factor). The search first estimates from the sign bits,
+using the error bound to drop candidates that cannot make the top-k, and only
+then refines the survivors with the extra bits. That makes the overhead
+**20 bytes** instead of 8.
+
+The code is data-oblivious (no learned codebook) and its error
 shrinks with `1/sqrt(d)`, so it does best at high dimension.
 
 ## Making the comparison fair
 
-Compare at **equal bits spent on the code**, and report RaBitQ's 8 factor
-bytes as a fixed overhead:
+Compare at **equal bits spent on the code**, and report RaBitQ's factor
+bytes as a fixed overhead (8 B at 1 bit, 20 B above that):
 
 ```
-PQ bytes      = m * nbits / 8        (= m at nbits=8)
-RaBitQ bytes  = d * nb_bits / 8 + 8
+PQ bytes      = m * nbits / 8              (= m at nbits=8)
+RaBitQ bytes  = d / 8 + 8                  (nb_bits = 1)
+              = d * nb_bits / 8 + 20       (nb_bits > 1)
 
 equal code bits  <=>  m = d * nb_bits / 8
 ```
@@ -81,14 +92,17 @@ equal code bits  <=>  m = d * nb_bits / 8
 
 | d   | RaBitQ 1-bit | PQ match | RaBitQ 2-bit | PQ match | RaBitQ 4-bit | PQ match |
 |-----|--------------|----------|--------------|----------|--------------|----------|
-| 96  | 12 + 8 B     | m=12     | 24 + 8 B     | m=24     | 48 + 8 B     | m=48     |
-| 100 | 13 + 8 B     | (12.5)   | 25 + 8 B     | m=25     | 50 + 8 B     | m=50     |
-| 128 | 16 + 8 B     | m=16     | 32 + 8 B     | m=32     | 64 + 8 B     | m=64     |
-| 512 | 64 + 8 B     | m=64     | 128 + 8 B    | m=128    | 256 + 8 B    | m=256    |
+| 96  | 12 + 8 B     | m=12     | 24 + 20 B    | m=24     | 48 + 20 B    | m=48     |
+| 100 | 13 + 8 B     | (12.5)   | 25 + 20 B    | m=25     | 50 + 20 B    | m=50     |
+| 128 | 16 + 8 B     | m=16     | 32 + 20 B    | m=32     | 64 + 20 B    | m=64     |
+| 512 | 64 + 8 B     | m=64     | 128 + 20 B   | m=128    | 256 + 20 B   | m=256    |
+
+These match `index.code_size` in FAISS 1.16 (e.g. d=128: 24 / 52 / 84 B).
 
 When no `m` matches exactly (d=100, 1-bit), bracket RaBitQ with the PQ sizes
-just below and above (m=10 and m=20). The 8-byte overhead matters most at
-low `d`: it is 40% of the total at d=96 and 11% at d=512.
+just below and above (m=10 and m=20). The overhead matters most at low `d`:
+at 1 bit it is 40% of the total at d=96 and 11% at d=512; at 2 bits it is
+45% at d=96, 38% at d=128 and 14% at d=512.
 
 Everything else must be held constant across the two indexes:
 
