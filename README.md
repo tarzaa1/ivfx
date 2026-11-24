@@ -1,14 +1,22 @@
 # ivfq
 
-Small FAISS playground for comparing inverted-file (IVF) indexes with different
-fine encodings: flat, product quantization (PQ) and RaBitQ.
+Small FAISS playground for comparing vector indexes and their encodings:
+
+- inverted-file (IVF) indexes with flat, product quantization (PQ), RaBitQ and
+  TurboQuant fine encodings;
+- HNSW graphs with float32, faiss SQ8 and Redis-style per-vector Q8 storage
+  (see [NOTES_hnsw.md](NOTES_hnsw.md) for the findings so far).
 
 ## Layout
 
 ```
-src/data_utils.py   load datasets from ../edge/data into numpy arrays
-src/ivfx.py         build / search / rerank / recall helpers
-src/playground.ipynb
+src/data_utils.py            load datasets from ../edge/data into numpy arrays
+src/ivfx.py                  IVF build / search / rerank / recall helpers
+src/ivftq.py                 standalone copy of build_ivfturboquant
+src/hnswx.py                 HNSW build / search / recall / size helpers
+src/playground.ipynb         IVF experiments
+src/hnsw_playground.ipynb    HNSW experiments
+NOTES_hnsw.md                HNSW quantization notes and results
 requirements.txt
 ```
 
@@ -39,10 +47,27 @@ Queries are truncated to the first 1000, ground truth is top-100 ids.
 build_ivf(d, base, metric, nlist)                    # IndexIVFFlat
 build_ivfpq(d, base, metric, nlist, m, nbits=8)      # IndexIVFPQ
 build_ivfrabitq(d, base, metric, nlist, nb_bits=1)   # IndexIVFRaBitQ
+build_ivfturboquant(d, base, metric, nlist, nbits=4) # IndexIVFScalarQuantizer, TurboQuant types
 search(index, queries, k, nprobe=None)  -> (D, I)
 rerank(base, queries, I, k, metric)     -> (D, I)    # exact rerank of candidates
 recall(I, gt, k)                        -> float
 ```
+
+## Helpers (`src/hnswx.py`)
+
+```python
+build_hnsw(d, base, metric, M=32, ef_construction=40)     # IndexHNSWFlat, float32
+build_hnswsq(d, base, metric, M=32, ef_construction=40)   # IndexHNSWSQ, faiss SQ8 (trained)
+build_hnswq8(d, base, metric, M=32, ef_construction=40)   # Redis-style Q8, simulated
+search(index, queries, k, ef_search=None) -> (D, I)
+recall(I, gt, k)                          -> float
+code_size(index)                          -> bytes per stored vector
+index_size(index)                         -> dict: vectors / graph / total / serialized bytes
+```
+
+`build_hnswq8` measures Q8's recall only: it stores dequantized float32
+vectors, so its real memory and speed are those of `build_hnsw`. No rerank is
+used on the HNSW side. Details in [NOTES_hnsw.md](NOTES_hnsw.md).
 
 `metric` is `"l2"` or `"ip"`. On unit-norm data both give the same ranking;
 the choice then only affects the coarse k-means partition. SIFT is not unit
